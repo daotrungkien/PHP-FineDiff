@@ -41,6 +41,11 @@
  *
  * 12-Aug-2013 (Thomas Bachem):
  *   - fixed/optimized UTF-8 support
+ * 
+ * 9-Aug-2025 (Dao Trung Kien)
+ *   - added FineDiffIgnoreOp to support ignore (I) operation (ignore some segments of the target text).
+ *     This is not directly used in this library, but may be useful in some scenarios.
+ * 
 */
 
 mb_internal_encoding('UTF-8');
@@ -78,6 +83,8 @@ mb_internal_encoding('UTF-8');
 *   'd{n}'     = skip n characters from source
 *   'i:{c}     = insert character 'c'
 *   'i{n}:{s}' = insert string s, which is of length n
+*   'I:{c}     = ignore character 'c' in target
+*   'I{n}:{c}  = ignore string s, which is of length n, in target
 *
 * Do not exist as of now, under consideration:
 *   'm{n}:{o}  = move n characters from source o characters ahead.
@@ -88,16 +95,14 @@ mb_internal_encoding('UTF-8');
 *   be done as a postprocessing method (->optimize()?)
 */
 abstract class FineDiffOp {
-	protected $fromLen;
-	protected $text;
-	protected $len;
-
 	abstract public function getFromLen(): int;
 	abstract public function getToLen(): int;
 	abstract public function getOpcode(): string;
 }
 
 class FineDiffDeleteOp extends FineDiffOp {
+	protected $fromLen;
+
 	public function __construct($len) {
 		$this->fromLen = $len;
 	}
@@ -116,6 +121,8 @@ class FineDiffDeleteOp extends FineDiffOp {
 }
 
 class FineDiffInsertOp extends FineDiffOp {
+	protected $text;
+
 	public function __construct($text) {
 		$this->text = $text;
 	}
@@ -138,6 +145,9 @@ class FineDiffInsertOp extends FineDiffOp {
 }
 
 class FineDiffReplaceOp extends FineDiffOp {
+	protected $fromLen;
+	protected $text;
+
 	public function __construct($fromLen, $text) {
 		$this->fromLen = $fromLen;
 		$this->text = $text;
@@ -167,6 +177,8 @@ class FineDiffReplaceOp extends FineDiffOp {
 }
 
 class FineDiffCopyOp extends FineDiffOp {
+	protected $len;
+
 	public function __construct($len) {
 		$this->len = $len;
 	}
@@ -187,6 +199,27 @@ class FineDiffCopyOp extends FineDiffOp {
 	}
 }
 
+class FineDiffIgnoreOp extends FineDiffOp {
+	protected $text;
+
+	public function __construct($text) {
+		$this->text = $text;
+	}
+	public function getFromLen(): int {
+		return 0;
+	}
+	public function getToLen(): int {
+		return mb_strlen($this->text);
+	}
+	public function getOpcode(): string {
+		$to_len = mb_strlen($this->text);
+		if ( $to_len === 1 ) {
+			return "I:{$this->text}";
+		}
+		return "I{$to_len}:{$this->text}";
+	}
+}
+
 /**
 * FineDiff ops
 *
@@ -202,8 +235,11 @@ class FineDiffOps {
 		else if ( $opcode === 'd' ) {
 			$edits[] = new FineDiffDeleteOp($from_len);
 		}
-		else /* if ( $opcode === 'i' ) */ {
+		else if ( $opcode === 'i' ) {
 			$edits[] = new FineDiffInsertOp(mb_substr($from, $from_offset, $from_len));
+		}
+		else /* if ( $opcode === 'I' ) */ {
+			$edits[] = new FineDiffIgnoreOp(mb_substr($from, $from_offset, $from_len));
 		}
 	}
 }
@@ -273,9 +309,12 @@ class FineDiff {
 			else if ( $edit instanceof FineDiffInsertOp ) {
 				FineDiff::renderDiffToHTMLFromOpcode('i', $edit->getText(), 0, $edit->getToLen());
 			}
-			else /* if ( $edit instanceof FineDiffReplaceOp ) */ {
+			else if ( $edit instanceof FineDiffReplaceOp ) {
 				FineDiff::renderDiffToHTMLFromOpcode('d', $this->from_text, $in_offset, $n);
 				FineDiff::renderDiffToHTMLFromOpcode('i', $edit->getText(), 0, $edit->getToLen());
+			}
+			else /* if ( $edit instanceof FineDiffIgnoreOp ) */ {
+				FineDiff::renderDiffToHTMLFromOpcode('I', $edit->getText(), 0, $edit->getToLen());
 			}
 			$in_offset += $n;
 		}
@@ -338,6 +377,7 @@ class FineDiff {
 			else {
 				$n = 1;
 			}
+
 			if ( $opcode === 'c' ) { // copy n characters from source
 				call_user_func($callback, 'c', $from, $from_offset, $n, '');
 				$from_offset += $n;
@@ -346,9 +386,17 @@ class FineDiff {
 				call_user_func($callback, 'd', $from, $from_offset, $n, '');
 				$from_offset += $n;
 			}
-			else /* if ( $opcode === 'i' ) */ { // insert n characters from opcodes
+			else if ( $opcode === 'i' ) { // insert n characters from opcodes
 				call_user_func($callback, 'i', $opcodes, $opcodes_offset + 1, $n);
 				$opcodes_offset += 1 + $n;
+			}
+			else if ( $opcode === 'I' ) { // ignore n characters from target
+				call_user_func($callback, 'I', $opcodes, $opcodes_offset + 1, $n);
+				$opcodes_offset += 1 + $n;
+			}
+			else {
+				// oops
+				return;
 			}
 		}
 	}
