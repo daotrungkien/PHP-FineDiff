@@ -283,7 +283,7 @@ class FineDiff {
 		return $this->edits;
 	}
 
-	public static function getOpcodesFromOps(array $ops): string {
+	public static function getOpcodesFromOps(?array $ops): string {
 		$opcodes = array();
 		foreach ( $ops as $op ) {
 			$opcodes[] = $op->getOpcode();
